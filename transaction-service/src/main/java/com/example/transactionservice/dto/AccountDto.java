@@ -9,6 +9,13 @@ public class AccountDto {
     private String accountNumber;
     private BigDecimal balance;
     private Long userId;
-    private String accountType;
+    private AccountType  accountType;
+
+    public enum AccountType {
+        SAVINGS,
+        CURRENT,
+        FIXED_DEPOSIT,
+        SALARY
+    }
 
 }

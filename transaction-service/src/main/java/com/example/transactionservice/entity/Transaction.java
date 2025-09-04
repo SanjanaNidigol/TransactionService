@@ -15,13 +15,19 @@ import java.time.LocalDateTime;
 public class Transaction {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "transaction_id")
+    private Long transactionId;
 
     private Long fromAccountId;
     private Long toAccountId;
     private BigDecimal amount;
     private String type;
     private LocalDateTime timestamp;
+    @Column(nullable = false)
+    private String status; // SUCCESS, FAILED
+
+    @Column(nullable = false, length = 3)
+    private String currencyCode;
 }
 
 //package com.example.transactionservice.entity;

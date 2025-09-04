@@ -3,13 +3,17 @@ package com.example.transactionservice.service;
 import com.example.transactionservice.client.AccountClient;
 import com.example.transactionservice.dto.AccountDto;
 import com.example.transactionservice.entity.Transaction;
+import com.example.transactionservice.entity.TransactionType;
 import com.example.transactionservice.repository.TransactionRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class TransactionService {
@@ -17,48 +21,120 @@ public class TransactionService {
     private final TransactionRepository repo;
     private final AccountClient accountClient;
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final ObjectMapper objectMapper;
 
-    public TransactionService(TransactionRepository repo, AccountClient accountClient, KafkaTemplate<String, String> kafkaTemplate) {
+    public TransactionService(TransactionRepository repo, AccountClient accountClient, KafkaTemplate<String, String> kafkaTemplate, ObjectMapper objectMapper) {
         this.repo = repo;
         this.accountClient = accountClient;
         this.kafkaTemplate = kafkaTemplate;
+        this.objectMapper = objectMapper;
     }
 
-    public Transaction performTransaction(Long fromAccountId, Long toAccountId, BigDecimal amount, String type) {
-        if (type.equalsIgnoreCase("TRANSFER")) {
-            // Get source account and check balance
-            AccountDto fromAcc = accountClient.getAccountById(fromAccountId);
-            if (fromAcc == null || fromAcc.getBalance().compareTo(amount) < 0) {
-                throw new RuntimeException("Insufficient balance for transfer");
-            }
-            accountClient.debit(fromAccountId, amount);
-            accountClient.credit(toAccountId, amount);
-        } else if (type.equalsIgnoreCase("DEBIT")) {
-            AccountDto fromAcc = accountClient.getAccountById(fromAccountId);
-            if (fromAcc == null || fromAcc.getBalance().compareTo(amount) < 0) {
-                throw new RuntimeException("Insufficient balance for debit");
-            }
-            accountClient.debit(fromAccountId, amount);
-        } else if (type.equalsIgnoreCase("CREDIT")) {
-            accountClient.credit(toAccountId, amount);
-        }
-
-        // Save transaction
+    public Transaction performTransaction(Long fromAccountId, Long toAccountId, BigDecimal amount, String type, String currencyCode) {
         Transaction tx = new Transaction();
         tx.setFromAccountId(fromAccountId);
         tx.setToAccountId(toAccountId);
         tx.setAmount(amount);
         tx.setType(type);
         tx.setTimestamp(LocalDateTime.now());
+        tx.setCurrencyCode(currencyCode);
+
+        try {
+            if (type.equalsIgnoreCase("TRANSFER")) {
+                AccountDto fromAcc = accountClient.getAccountById(fromAccountId);
+                if (fromAcc == null || fromAcc.getBalance().compareTo(amount) < 0) {
+                    tx.setStatus("FAILED");
+                    return repo.save(tx);
+                }
+                accountClient.debit(fromAccountId, amount);
+                accountClient.credit(toAccountId, amount);
+            } else if (type.equalsIgnoreCase("DEBIT")) {
+                AccountDto fromAcc = accountClient.getAccountById(fromAccountId);
+                if (fromAcc == null || fromAcc.getBalance().compareTo(amount) < 0) {
+                    tx.setStatus("FAILED");
+                    return repo.save(tx);
+                }
+                accountClient.debit(fromAccountId, amount);
+            } else if (type.equalsIgnoreCase("CREDIT")) {
+                accountClient.credit(toAccountId, amount);
+            }
+
+            tx.setStatus("SUCCESS");
+
+        } catch (Exception e) {
+            tx.setStatus("FAILED");
+        }
 
         Transaction savedTx = repo.save(tx);
 
-        // Publish transaction event to Kafka
-        String message = String.format("TRANSACTION:%d,type=%s,from=%d,to=%d,amount=%s",
-                savedTx.getId(), type, fromAccountId, toAccountId, amount.toPlainString());
-        kafkaTemplate.send("transaction-events", message);
+        try {
+            Map<String, Object> event = new HashMap<>();
+            event.put("transactionId", savedTx.getTransactionId());
+            event.put("type", type);
+            event.put("fromAccountId", fromAccountId);
+            event.put("toAccountId", toAccountId);
+            event.put("amount", amount.toPlainString());
+            event.put("status", savedTx.getStatus());
+            event.put("currencyCode", currencyCode);
+
+            String message = objectMapper.writeValueAsString(event);
+            String eventJson = new ObjectMapper().writeValueAsString(event);
+            kafkaTemplate.send("transaction-events", eventJson);
+            System.out.println("✅ Sent transaction event: " + message);
+
+        } catch (Exception e) {
+            e.printStackTrace(); // log properly in real app
+        }
+        // Kafka message
+//        String message = String.format("TRANSACTION:%d,type=%s,from=%d,to=%d,amount=%s,status=%s,currency=%s",
+//                savedTx.getTransactionId(), type, fromAccountId, toAccountId, amount.toPlainString(), savedTx.getStatus(), currencyCode);
+//        kafkaTemplate.send("transaction-events", message);
 
         return savedTx;
+    }
+
+
+//    public Transaction performTransaction(Long fromAccountId, Long toAccountId, BigDecimal amount, String type) {
+//        if (type.equalsIgnoreCase("TRANSFER")) {
+//            // Get source account and check balance
+//            AccountDto fromAcc = accountClient.getAccountById(fromAccountId);
+//            if (fromAcc == null || fromAcc.getBalance().compareTo(amount) < 0) {
+//                throw new RuntimeException("Insufficient balance for transfer");
+//            }
+//            accountClient.debit(fromAccountId, amount);
+//            accountClient.credit(toAccountId, amount);
+//        } else if (type.equalsIgnoreCase("DEBIT")) {
+//            AccountDto fromAcc = accountClient.getAccountById(fromAccountId);
+//            if (fromAcc == null || fromAcc.getBalance().compareTo(amount) < 0) {
+//                throw new RuntimeException("Insufficient balance for debit");
+//            }
+//            accountClient.debit(fromAccountId, amount);
+//        } else if (type.equalsIgnoreCase("CREDIT")) {
+//            accountClient.credit(toAccountId, amount);
+//        }
+//
+//        // Save transaction
+//        Transaction tx = new Transaction();
+//        tx.setFromAccountId(fromAccountId);
+//        tx.setToAccountId(toAccountId);
+//        tx.setAmount(amount);
+//        tx.setType(type);
+//        tx.setTimestamp(LocalDateTime.now());
+//
+//        Transaction savedTx = repo.save(tx);
+//
+//        // Publish transaction event to Kafka
+//        String message = String.format("TRANSACTION:%d,type=%s,from=%d,to=%d,amount=%s",
+//                savedTx.getId(), type, fromAccountId, toAccountId, amount.toPlainString());
+//        kafkaTemplate.send("transaction-events", message);
+//
+//        return savedTx;
+//    }
+
+
+    public Transaction getTransactionById(Long transactionId) {
+        return repo.findById(transactionId)
+                .orElseThrow(() -> new RuntimeException("Transaction not found"));
     }
 
     public List<Transaction> getAllTransactions() {

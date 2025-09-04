@@ -20,6 +20,12 @@ public class TransactionController {
         this.service = service;
     }
 
+    @GetMapping("/{transactionId}")
+    public ResponseEntity<Transaction> getTransactionById(@PathVariable Long transactionId) {
+        Transaction tx = service.getTransactionById(transactionId);
+        return ResponseEntity.ok(tx);
+    }
+
     // POST transaction
     @PostMapping
     public ResponseEntity<Transaction> createTransaction(@RequestBody Map<String, Object> request) {
@@ -31,8 +37,8 @@ public class TransactionController {
                 : null;
         BigDecimal amount = new BigDecimal(request.get("amount").toString());
         String type = request.get("type").toString();
-
-        return ResponseEntity.ok(service.performTransaction(fromAccountId, toAccountId, amount, type));
+        String currencyCode = request.get("currencyCode").toString();
+        return ResponseEntity.ok(service.performTransaction(fromAccountId, toAccountId, amount, type, currencyCode));
     }
 
     // GET all transactions
